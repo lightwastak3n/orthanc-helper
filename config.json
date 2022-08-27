@@ -1,0 +1,11 @@
+{
+   "server": {
+      "url": "http://192.168.100.46:8042",
+      "username": "sasa",
+      "password": "11235813",
+      "name": "ORTHANC"
+   },
+   "modalities": {
+      
+   }
+}
