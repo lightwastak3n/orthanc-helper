@@ -1,12 +1,11 @@
-import json
 from orthanc_helper import Server
 
-with open('config.json', 'r') as config:
-    data = json.load(config)
+orthanc = Server()
+orthanc.upload_folder("/home/sasa/Documents/DICOM/Test_patients/")
 
-SERVER_URL = data['server']['url']
-USERNAME = data['server']['username']
-PASSWORD = data['server']['password']
+studies = orthanc.get_studies_list()
+print(studies)
+patient = studies[0][0].replace("_", "^")
+orthanc.anon_study_server_to_local(patient, "/home/sasa/Downloads/")
 
-orthanc = Server(SERVER_URL, USERNAME, PASSWORD)
-orthanc.upload("~/Documents/Test")
+orthanc.delete_all_studies()

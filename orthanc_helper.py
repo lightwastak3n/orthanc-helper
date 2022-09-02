@@ -1,27 +1,45 @@
 import os
 import json
+import threading
 
 from pyorthanc import Orthanc
 from requests.exceptions import HTTPError
 
 
 class Server():
-    def __init__(self, server_url: str, username: str, password: str) -> None:
+    def __init__(self, server_url: str=None, username: str=None, password: str=None) -> None:
         """Constructor
 
         Parameters
         ----------
-        server_url
+        server_url: str
             Orthanc server address
-        username
+        username: str
             Username.
-        password
+        password: str
             Password.
         """
+        if not server_url:
+            server_url, username, password = self.load_credentials()
         self.server = Orthanc(server_url)
         self.server.setup_credentials(username, password)
 
-    def upload_folder(self, folder_path: str) -> None:
+    def load_credentials(self) -> tuple:
+        """
+        Loads ORTHANC server url, username and password from the config file.
+
+        Return
+        ------
+            Returns server url, username and password found in the config file.
+        """
+        with open('config.json', 'r') as config:
+            data = json.load(config)
+        server_url = data['server']['url']
+        username = data['server']['username']
+        password = data['server']['password']
+        return server_url, username, password
+
+    def upload_folder(self, folder_path: str, threads_no=4) -> None:
         """
         Uploads all dicom files found in folder_path recursively to the dicom server.
         
@@ -29,19 +47,31 @@ class Server():
         ----------
         folder_path: str
             Path to the folder that contains dicom files.
+        threads_no: int
+            Number of threads to use for uploading. 4 by default.
         """        
         dicom_files = []
         for path, subdirs, files in os.walk(folder_path):
             for name in files:
-                if ".dcm" in name:
-                    dicom_files.append(os.path.join(path, name))
-        total_uploaded = 0
-        for dicom_file in dicom_files:
-            with open(dicom_file, 'rb') as image:
-                self.server.post_instances(image.read())
-            total_uploaded += 1
-            print(f"Uploaded {dicom_file}.")
-        print(f"Uploaded {total_uploaded} dicom files found in {folder_path}.")
+                dicom_files.append(os.path.join(path, name))
+
+        def upload_instances(dicom_list):
+            for dicom_file in dicom_list:
+                with open(dicom_file, 'rb') as image:
+                    self.server.post_instances(image.read())
+                print(f"Uploaded {dicom_file}.")
+
+        threads = []
+        for i in range(threads_no):
+            upload_files = dicom_files[i::threads_no]
+            t = threading.Thread(target=upload_instances, args=(upload_files, ))
+            t.start()
+            threads.append(t)
+            
+        for thread in threads:
+            thread.join()
+
+        print(f"Uploaded {len(dicom_files)} dicom files found in {folder_path}.")
 
     def get_study_details(self, study_id: str) -> tuple:
         """
@@ -120,7 +150,7 @@ class Server():
         self.date_modality_to_server(modality, f"{from_date}-{to_date}", server_name)
         print("Finished downloading all studies between {from_date} and {to_date} from {modality} to {server_name}.")
 
-    def date_server_to_local(self, date: str, download_path: str) -> None:
+    def date_server_to_local(self, date: str, download_path: str, threads_no=2) -> None:
         """
         Downloads studies (from ORTHANC server to local machine) that were created on a specified date and stores them as zip files.
         
@@ -141,16 +171,26 @@ class Server():
                     }'''
         search_data = json.loads(d1+d2+d3)
         studies_ids = self.server.c_find(search_data)
-        total = []
-        for study_id in studies_ids:
-            p_name, study_time, study_date = self.get_study_details(study_id)
-            file_name = f"{p_name}_{study_time}.zip"
-            file_path = os.path.join(download_path,file_name)
-            print(f"Downloading {file_name}.")
-            with open(file_path, 'wb') as study_zip:
-                study_zip.write(self.server.get_study_zip_file(study_id))
-            total += 1
-        print(f"Finished downloading {total} studies.")
+
+
+        def download_studies(studies):
+            for study_id in studies:
+                p_name, study_time, study_date = self.get_study_details(study_id)
+                file_name = f"{p_name}_{study_time}.zip"
+                file_path = os.path.join(download_path,file_name)
+                print(f"Downloading {file_name}.")
+                with open(file_path, 'wb') as study_zip:
+                    study_zip.write(self.server.get_study_zip_file(study_id))
+        
+        threads = []
+        for i in range(threads_no):
+            studies = studies_ids[i::threads_no]
+            t = threading.Thread(target=download_studies, args=(studies, ))
+            t.start()
+            threads.append(t)
+        for thread in threads:
+            thread.join()
+        print(f"Finished downloading {len(studies_ids)} studies.")
 
     def date_range_server_to_local(self, from_date: str, to_date: str,  download_path: str) -> None:
         """
@@ -227,13 +267,13 @@ class Server():
 
     def anon_study_server_to_local(self, patient_name: str, download_path: str) -> None:
         """
-        Takes patients name and gives all studies found with that name. After you choose which study you wish to download it will
+        Takes patient's name and gives all studies found with that name. After you choose which study you wish to download it will
         anonymizes study, download it as zip file and then delete it from the server.
         
         Parameters
         ----------
         patient_name : str
-            Name (or last name) to use as patient name to search for a study to anonymize.
+            String to use as a patient name to search for a study to anonymize. Use the form john^smith or smith^john.
         download_path: str
             The path to a folder in which to save anonymized zip file.
         """
@@ -255,6 +295,7 @@ class Server():
         choice = int(input("\nType the number of the study you wish to anonymize: "))
         target_id = studies_ids[choice]
         response = self.server.anonymize_study(target_id, {})
+        print("Anonymized selected study.")
 
         anon_id = response["ID"]
         file_path = os.path.join(download_path, "Anonymized_patient")
