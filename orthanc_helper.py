@@ -39,7 +39,7 @@ class Server():
         password = data['server']['password']
         return server_url, username, password
 
-    def upload_folder(self, folder_path: str, threads_no=4) -> None:
+    def upload_folder(self, folder_path: str, threads_no: int = 4) -> None:
         """
         Uploads all dicom files found in folder_path recursively to the dicom server.
         
@@ -96,7 +96,7 @@ class Server():
         study_time = study_info['MainDicomTags']['StudyTime']
         return p_name, study_time, study_date
 
-    def date_modality_to_server(self, modality: str, date: str, server_name: str = "ORTHANC") -> None:
+    def date_modality_to_server(self, modality: str, date: str, server_name: str = "ORTHANC", threads_no: int = 2) -> None:
         """
         Downloads studies created on specified date and from specified modality to specified ORTHANC server.
         
@@ -108,6 +108,8 @@ class Server():
             Date on which patients studies were created. Format 'yyyymmdd'.
         server_name: str
             Name of your ORTHANC server. 'ORTHANC' by default.
+        threads_no: int
+            Number of threads to use for downloading. 2 by default.
         """
         d1 = '''{
         "Level" : "Study",
@@ -125,14 +127,26 @@ class Server():
         result = self.server.query_on_modality(modality, data=search_data)
         query_id = result['ID']
         server_data = {'TargetAet': f"{server_name}"}
-        print(f"Downloading results from {query_id} to {server_name}")
-        try:
-            self.server.move_query_results_to_given_modality(query_id, data=server_data)
-            print("Done.")
-        except HTTPError:
-            print(f"Couldn't connect to {server_name} server. Please check your inputs.")
+        answers = self.server.get_query_answers(query_id)
 
-    def date_range_modality_to_server(self, modality: str, from_date: str, to_date: str, server_name: str = "ORTHANC") -> None:
+        def download_answer(index_list):
+            for index in index_list:
+                patient_name = self.server.get_content_of_specified_query_answer(query_id, index)['0010,0010']['Value']
+                print(f"Downloading {patient_name} to {server_name}")
+                self.server.send_resource_to_other_modality(query_id, index, server_data)
+
+        threads = []
+        print(f"{len(answers)} studies found on {date}. Downloading to {server_name}")
+        for i in range(threads_no):
+            index_list = answers[i::threads_no]
+            t = threading.Thread(target=download_answer, args=(index_list, ))
+            t.start()
+            threads.append(t)
+        for thread in threads:
+            thread.join()
+        print(f"Finished download {len(answers)}")
+
+    def date_range_modality_to_server(self, modality: str, from_date: str, to_date: str, server_name: str = "ORTHANC", thread_no: int = 2) -> None:
         """
         Downloads studies created on specified date range and from specified modality to specified ORTHANC server.
         
@@ -146,11 +160,13 @@ class Server():
             End of the date range. Format 'yyyymmdd'
         server_name: str
             Name of your ORTHANC server. 'ORTHANC' by default.
+        threads_no: int
+            Number of threads to use for downloading. 2 by default.
         """
-        self.date_modality_to_server(modality, f"{from_date}-{to_date}", server_name)
+        self.date_modality_to_server(modality, f"{from_date}-{to_date}", server_name, thread_no)
         print("Finished downloading all studies between {from_date} and {to_date} from {modality} to {server_name}.")
 
-    def date_server_to_local(self, date: str, download_path: str, threads_no=2) -> None:
+    def date_server_to_local(self, date: str, download_path: str, threads_no: int = 2) -> None:
         """
         Downloads studies (from ORTHANC server to local machine) that were created on a specified date and stores them as zip files.
         
@@ -160,6 +176,8 @@ class Server():
             Date on which studies were created. Format 'yyyymmdd'.
         download_path: str
             Folder to which to download studies.
+        threads_no: int
+            Number of threads to use for downloading. 2 by default.
         """
         d1 = '''{
                     "Level" : "Study",
@@ -192,7 +210,7 @@ class Server():
             thread.join()
         print(f"Finished downloading {len(studies_ids)} studies.")
 
-    def date_range_server_to_local(self, from_date: str, to_date: str,  download_path: str) -> None:
+    def date_range_server_to_local(self, from_date: str, to_date: str,  download_path: str, thread_no: int = 2) -> None:
         """
         Downloads studies (from ORTHANC server to local machine) that were created between specified date range.
         
@@ -204,6 +222,8 @@ class Server():
             End of the date range. Format 'yyyymmdd'
         download_path: str
             Folder to which to download studies.
+        threads_no: int
+            Number of threads to use for downloading. 2 by default.
         """
         self.date_server_to_local(f"{from_date}-{to_date}", download_path)
         print(f"Finished downloading all studies between {from_date} and {to_date} to {download_path}.")
