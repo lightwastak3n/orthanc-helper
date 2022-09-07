@@ -3,7 +3,6 @@ import json
 import threading
 
 from pyorthanc import Orthanc
-from requests.exceptions import HTTPError
 
 
 class Server():
@@ -164,7 +163,7 @@ class Server():
             Number of threads to use for downloading. 2 by default.
         """
         self.date_modality_to_server(modality, f"{from_date}-{to_date}", server_name, thread_no)
-        print("Finished downloading all studies between {from_date} and {to_date} from {modality} to {server_name}.")
+        print(f"Finished downloading all studies between {from_date} and {to_date} from {modality} to {server_name}.")
 
     def date_server_to_local(self, date: str, download_path: str, threads_no: int = 2) -> None:
         """
